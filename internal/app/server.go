@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"log"
 	"net"
 	"net/http"
 	"time"
@@ -73,6 +74,7 @@ func (s *Server) Run() error {
 	group := new(errgroup.Group)
 
 	group.Go(func() error {
+		log.Printf("payment-service http listening on %s", s.httpServer.Addr)
 		if err := s.httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			return err
 		}
@@ -80,6 +82,7 @@ func (s *Server) Run() error {
 	})
 
 	group.Go(func() error {
+		log.Printf("payment-service grpc listening on %s", s.grpcListener.Addr().String())
 		if err := s.grpcServer.Serve(s.grpcListener); err != nil && !errors.Is(err, net.ErrClosed) {
 			return err
 		}
