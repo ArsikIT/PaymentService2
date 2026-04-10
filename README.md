@@ -1,6 +1,6 @@
 # Payment Service
 
-`payment-service` is the payment bounded context of the assignment platform. It owns only payment data and does not know about order persistence. Its responsibility is to authorize or decline payments and store the transaction result.
+`payment-service` owns payment data, exposes a REST API for manual checks, and exposes a gRPC server used by `order-service` to authorize payments.
 
 ## Architecture
 
@@ -13,6 +13,7 @@ payment-service/
 |- internal/usecase
 |- internal/repository
 |- internal/transport/http
+|- internal/transport/grpc
 |- internal/app
 |- migrations
 |- docker-compose.yml
@@ -23,7 +24,8 @@ Dependency direction:
 
 ```text
 HTTP handlers -> use cases -> repository port
-                              `-> postgres repository
+gRPC handlers -> use cases -> repository port
+                               `-> postgres repository
 ```
 
 Key decisions:
@@ -31,8 +33,9 @@ Key decisions:
 - `domain` contains only payment entities, statuses, and business errors.
 - `usecase` contains payment validation, limit checks, status selection, and ID generation.
 - `repository` contains PostgreSQL persistence only.
-- `transport/http` stays thin and only parses requests and returns DTO responses.
-- `cmd/main.go` and `internal/app/server.go` act as the composition root and manual dependency wiring.
+- `transport/http` stays thin and maps REST requests/responses.
+- `transport/grpc` stays thin and maps gRPC requests/responses.
+- `cmd/main.go` and `internal/app/server.go` act as the composition root and start both HTTP and gRPC servers.
 
 ## Bounded Context
 
@@ -48,7 +51,7 @@ Key decisions:
 - order cancellation rules
 - order persistence
 
-This separation is important for defense: the service stores payment data only and is called by `order-service` through REST.
+This separation is important for defense: the service stores payment data only and is called by `order-service` through gRPC.
 
 ## Business Rules
 
@@ -69,6 +72,20 @@ This service has its own PostgreSQL container and its own database:
 
 `payment-service` does not read or write order tables.
 
+## Environment Variables
+
+Default values are listed in [.env.example](/C:/Users/hp/payment-service/.env.example).
+
+- `HTTP_ADDR` default: `:8081`
+- `GRPC_ADDR` default: `:50051`
+- `POSTGRES_DSN` default: `postgres://postgres@127.0.0.1:55432/payment_service?sslmode=disable`
+
+For local Docker runs, use a DSN with password:
+
+```text
+postgres://postgres:postgres@127.0.0.1:55432/payment_service?sslmode=disable
+```
+
 ## Run
 
 1. Start the payment database:
@@ -83,12 +100,12 @@ docker compose up -d
 go run ./cmd
 ```
 
-## Environment Variables
+By default the service starts:
 
-- `HTTP_ADDR` default: `:8081`
-- `POSTGRES_DSN` default: `postgres://postgres@127.0.0.1:55432/payment_service?sslmode=disable`
+- REST on `:8081`
+- gRPC on `:50051`
 
-## API Examples
+## REST API Examples
 
 Create payment:
 
@@ -124,11 +141,31 @@ curl -X POST http://localhost:8081/payments \
   -d "{\"order_id\":\"ord-2\",\"amount\":150001}"
 ```
 
+## gRPC Contract
+
+`payment-service` implements `PaymentService.ProcessPayment` from the shared protobuf contract stored outside the service repository.
+
+Main request fields:
+
+- `order_id`
+- `amount`
+
+Main response fields:
+
+- `payment_id`
+- `order_id`
+- `status`
+- `transaction_id`
+- `message`
+- `processed_at`
+
 ## Architecture Diagram
 
 ```mermaid
 flowchart LR
-    Client --> PaymentAPI[Payment Service HTTP API]
-    PaymentAPI --> PaymentUC[Payment Use Case]
+    OrderService[Order Service gRPC Client] --> PaymentGRPC[Payment Service gRPC]
+    Client --> PaymentHTTP[Payment Service HTTP API]
+    PaymentHTTP --> PaymentUC[Payment Use Case]
+    PaymentGRPC --> PaymentUC
     PaymentUC --> PaymentRepo[(Payment Service DB)]
 ```
